@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
+#include <inttypes.h>
 #include <uv.h>
 #include <map>
 #include <vector>
@@ -26,13 +28,16 @@ struct ServerInfo {
     uint16_t uv_udp_id;
     time_t  out_time;
 };
-std::map<uint32_t, ServerInfo> map_udp_in; // client to server, client ip  -> server(uv_udp_t id)
+std::map<uint64_t, ServerInfo> map_udp_in; // client to server, client ip,port  -> server(uv_udp_t id)
 std::map<int32_t, ClientIp> map_udp_out; // server to client, out fd -> client,
 
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 {
     buf->base = (char *)malloc(suggested_size);
     buf->len = suggested_size;
+}
+uint64_t to_ip_port(uint32_t ip, uint16_t port) {
+    return ((uint64_t)ip)<<16 | port;
 }
 int get_available_id(uint16_t &id)
 {
@@ -41,7 +46,7 @@ int get_available_id(uint16_t &id)
 
     while(1) {
         uint16_t test_id = cur_id;
-        for (std::map<uint32_t, ServerInfo>::iterator it = map_udp_in.begin(); it != map_udp_in.end(); ++it)
+        for (std::map<uint64_t, ServerInfo>::iterator it = map_udp_in.begin(); it != map_udp_in.end(); ++it)
         {
             if (it->second.uv_udp_id == cur_id)
             {
@@ -64,7 +69,7 @@ int get_available_id(uint16_t &id)
 int clear_udp() {
     time_t timer;
     time(&timer);
-    for (std::map<uint32_t, ServerInfo>::iterator it = map_udp_in.begin(); it != map_udp_in.end(); ) {
+    for (std::map<uint64_t, ServerInfo>::iterator it = map_udp_in.begin(); it != map_udp_in.end(); ) {
         double seconds = difftime(timer, it->second.out_time);
         if (seconds < EXPIRE_DURATION) {
             ++it;
@@ -122,7 +127,8 @@ void on_read_client(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
         const struct sockaddr_in *addr_temp = (const struct sockaddr_in *)addr;
 
         uint16_t port = ntohs(addr_temp->sin_port);
-        std::map<uint32_t, ServerInfo>::iterator it = map_udp_in.find(addr_temp->sin_addr.s_addr);
+        uint64_t ip_port = to_ip_port(addr_temp->sin_addr.s_addr, addr_temp->sin_port);
+        std::map<uint64_t, ServerInfo>::iterator it = map_udp_in.find(ip_port);
         if (it == map_udp_in.end())
         {
             printf("recv from client %s:%d  %d,%d\n", sender, port, (int)buf->len, nread);
@@ -138,8 +144,8 @@ void on_read_client(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
             ServerInfo info;
             info.uv_udp_id = id;
             time(&info.out_time);
-            map_udp_in[addr_temp->sin_addr.s_addr] = info;
-            printf("add udp_in: %x, %d\n", addr_temp->sin_addr.s_addr, id);
+            map_udp_in[ip_port] = info;
+            printf("add udp_in: %" PRIx64 ", %d\n", ip_port, id);
             ClientIp client;
             client.ip = sender;
             client.port = port;
@@ -154,10 +160,10 @@ void on_read_client(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
         {
             uint16_t id = it->second.uv_udp_id;
             
-            if (port !=  map_udp_out[vec_udp_out[id].io_watcher.fd].port) {
+/*            if (port !=  map_udp_out[vec_udp_out[id].io_watcher.fd].port) {
                 printf("source ip changed from %d to %d\n", map_udp_out[vec_udp_out[id].io_watcher.fd].port, port);
                 map_udp_out[vec_udp_out[id].io_watcher.fd].port = port;
-            }
+            } */
             //printf("recv from client %s:%d,%d,%d, id: %d\n", sender, ntohs(addr_temp->sin_port), (int)buf->len, nread, it->second.uv_udp_id);
             send_msg(WG_SERVER.c_str(), WG_PORT, buf->base, nread, vec_udp_out[it->second.uv_udp_id]);
             time(&it->second.out_time);
@@ -181,22 +187,17 @@ void on_read_server(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
         uv_ip4_name((const struct sockaddr_in *)addr, sender, 16);
         int fd = socket->io_watcher.fd;
         //printf("recv from server %s:%d,%d, id:%d,%d\n", sender, (int)buf->len, nread, fd, fd_to_id[fd]);
-
-/*        char* buffer = (char *)malloc(nread);
-        memcpy(buffer, buf->base, nread);
-        uv_buf_t buf_temp = uv_buf_init(buffer, (uint32_t)nread);
-        struct sockaddr_in send_addr;
-        uv_ip4_addr(map_udp_out[fd].ip.c_str(), map_udp_out[fd].port, &send_addr);
-        uv_udp_send_t *send_req = (uv_udp_send_t *)malloc(sizeof(uv_udp_send_t));
-        send_req->data = (void*)buffer;
-        uv_udp_send(send_req, &udp_socket, &buf_temp, 1, (const struct sockaddr *)&send_addr, on_send); */
+        if (map_udp_out.find(fd) == map_udp_out.end()) {
+            if (buf && buf->base)
+                free(buf->base);
+            printf("not find udp session: %d\n", fd);
+            return;
+        }
         send_msg(map_udp_out[fd].ip.c_str(), map_udp_out[fd].port, buf->base, nread, udp_socket);
     }
 
     if (buf && buf->base)
-    {
         free(buf->base);
-    }
 }
 int main(int argc,char **argv)
 {
