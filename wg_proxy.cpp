@@ -93,15 +93,17 @@ void on_send(uv_udp_send_t *req, int status)
     }
 }
 
-void send_msg(char *msg, uint32_t len, uv_udp_t& sock)
+void send_msg(const char* server, uint16_t port, char *msg, uint32_t len, uv_udp_t& sock)
 {
-  uv_buf_t buf = uv_buf_init(msg, len);
+  char *buffer = (char *)malloc(len);
+  memcpy(buffer, msg, len);
+  uv_buf_t buf = uv_buf_init(buffer, len);
 
   struct sockaddr_in send_addr;
-  uv_ip4_addr(WG_SERVER.c_str(), WG_PORT, &send_addr);
+  uv_ip4_addr(server, port, &send_addr);
 
   uv_udp_send_t *send_req = (uv_udp_send_t *)malloc(sizeof(uv_udp_send_t));
-  send_req->data = (void*)msg;
+  send_req->data = (void*)buffer;
   uv_udp_send(send_req, &sock, &buf, 1, (const struct sockaddr *)&send_addr, on_send);
 
 }
@@ -144,9 +146,7 @@ void on_read_client(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
             map_udp_out[vec_udp_out[id].io_watcher.fd] = client;
             printf("add udp_out: %s, %d\n", sender, port);
 
-            char* buffer = (char *)malloc(nread);
-            memcpy(buffer, buf->base, nread);
-            send_msg(buffer, nread, vec_udp_out[id]);
+            send_msg(WG_SERVER.c_str(), WG_PORT, buf->base, nread, vec_udp_out[id]);
             if (map_udp_in.size() > MAX_FD / 2)
                 clear_udp();
         }
@@ -159,9 +159,7 @@ void on_read_client(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
                 map_udp_out[vec_udp_out[id].io_watcher.fd].port = port;
             }
             //printf("recv from client %s:%d,%d,%d, id: %d\n", sender, ntohs(addr_temp->sin_port), (int)buf->len, nread, it->second.uv_udp_id);
-            char* buffer = (char *)malloc(nread);
-            memcpy(buffer, buf->base, nread);
-            send_msg(buffer, nread, vec_udp_out[it->second.uv_udp_id]);
+            send_msg(WG_SERVER.c_str(), WG_PORT, buf->base, nread, vec_udp_out[it->second.uv_udp_id]);
             time(&it->second.out_time);
         }
     }
@@ -183,14 +181,16 @@ void on_read_server(uv_udp_t *socket, ssize_t nread, const uv_buf_t *buf, const 
         uv_ip4_name((const struct sockaddr_in *)addr, sender, 16);
         int fd = socket->io_watcher.fd;
         //printf("recv from server %s:%d,%d, id:%d,%d\n", sender, (int)buf->len, nread, fd, fd_to_id[fd]);
-        char* buffer = (char *)malloc(nread);
+
+/*        char* buffer = (char *)malloc(nread);
         memcpy(buffer, buf->base, nread);
         uv_buf_t buf_temp = uv_buf_init(buffer, (uint32_t)nread);
         struct sockaddr_in send_addr;
         uv_ip4_addr(map_udp_out[fd].ip.c_str(), map_udp_out[fd].port, &send_addr);
         uv_udp_send_t *send_req = (uv_udp_send_t *)malloc(sizeof(uv_udp_send_t));
         send_req->data = (void*)buffer;
-        uv_udp_send(send_req, &udp_socket, &buf_temp, 1, (const struct sockaddr *)&send_addr, on_send);
+        uv_udp_send(send_req, &udp_socket, &buf_temp, 1, (const struct sockaddr *)&send_addr, on_send); */
+        send_msg(map_udp_out[fd].ip.c_str(), map_udp_out[fd].port, buf->base, nread, udp_socket);
     }
 
     if (buf && buf->base)
