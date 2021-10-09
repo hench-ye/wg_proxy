@@ -235,10 +235,15 @@ int main(int argc,char **argv)
     for (int i = 0; i < MAX_FD; i++)
     {
         uv_udp_init(loop, &vec_udp_out[i]);
-        uv_ip4_addr("0.0.0.0", OUT_UDP_PORT + i, &recv_addr);
+        //uv_ip4_addr("0.0.0.0", OUT_UDP_PORT + i, &recv_addr);
+        uv_ip4_addr("0.0.0.0", 0, &recv_addr);
         uv_udp_bind(&vec_udp_out[i], (const struct sockaddr *)&recv_addr, UV_UDP_REUSEADDR);
         uv_udp_recv_start(&vec_udp_out[i], alloc_buffer, on_read_server);
-        printf("create:%d\n", vec_udp_out[i].io_watcher.fd);
+        struct sockaddr_in sockname;
+        int namelen = sizeof(sockname);
+        int r = uv_udp_getsockname(&vec_udp_out[i], (struct sockaddr*) &sockname, &namelen);
+        uint16_t port = ntohs(sockname.sin_port);
+        printf("create:%d, port:%d\n", vec_udp_out[i].io_watcher.fd, port);
         fd_to_id[vec_udp_out[i].io_watcher.fd] = i;
     }
 
